@@ -1,11 +1,103 @@
+// #![forbid(unused)]
 //! Derived from:
 //! <https://raw.githubusercontent.com/quickfur/dcal/master/dcal.d>.
 
-extern crate chrono;
-extern crate itertools;
+/// Date representation.
+#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct NaiveDate;
 
-use chrono::{Datelike, NaiveDate};
-use itertools::Itertools;
+impl NaiveDate {
+    pub fn from_ymd(_y: i32, _m: u32, _d: u32) -> NaiveDate {
+        unimplemented!()
+    }
+
+    pub fn year(&self) -> i32 {
+        unimplemented!()
+    }
+
+    pub fn month(&self) -> u32 {
+        unimplemented!()
+    }
+
+    pub fn day(&self) -> u32 {
+        unimplemented!()
+    }
+
+    pub fn succ(&self) -> NaiveDate {
+        unimplemented!()
+    }
+
+    pub fn weekday(&self) -> Weekday {
+        unimplemented!()
+    }
+
+    pub fn isoweekdate(&self) -> (i32, u32, Weekday) {
+        unimplemented!()
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum Weekday {
+    Mon,
+    Tue,
+    Wed,
+    Thu,
+    Fri,
+    Sat,
+    Sun,
+}
+
+impl Weekday {
+    pub fn num_days_from_sunday(&self) -> u32 {
+        unimplemented!()
+    }
+}
+
+/// GroupBy implementation.
+struct GroupBy<G, It, F>
+where It: Iterator,
+    F: FnMut(&It::Item) -> G
+{
+    _dummy: (G, It, F),
+}
+
+impl<G, It, F> Iterator for GroupBy<G, It, F>
+where It: Iterator,
+    F: FnMut(&It::Item) -> G
+{
+    type Item = (G, Vec<It::Item>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        unimplemented!()
+    }
+}
+
+trait IteratorExt: Iterator + Sized {
+    fn foreach<F>(&mut self, mut f: F)
+    where F: FnMut(Self::Item) {
+        for e in self { f(e) }
+    }
+
+    fn group_by<G, F>(self, _g: F) -> GroupBy<G, Self, F>
+    where F: FnMut(&Self::Item) -> G {
+        unimplemented!()
+    }
+
+    fn join(mut self, sep: &str) -> String
+    where Self::Item: std::fmt::Display {
+        let mut s = String::new();
+        if let Some(e) = self.next() {
+            s.push_str(&format!("{}", e));
+            for e in self {
+                s.push_str(sep);
+                s.push_str(&format!("{}", e));
+            }
+        }
+        s
+    }
+}
+
+impl<It> IteratorExt for It where It: Iterator {}
 
 ///
 /// Generates an iterator that yields exactly n spaces.
@@ -14,8 +106,8 @@ fn spaces(n: usize) -> std::iter::Take<std::iter::Repeat<char>> {
     std::iter::repeat(' ').take(n)
 }
 
-#[cfg(test)]
 #[test]
+#[cfg(test)]
 fn test_spaces() {
     assert_eq!(spaces(10).collect::<String>(), "          ")
 }
@@ -139,7 +231,7 @@ fn test_group_by() {
 /// Groups an iterator of dates by month.
 ///
 trait ByMonth: DateIterator + Sized {
-    fn by_month(self) -> itertools::GroupBy<u32, Self, fn(&NaiveDate) -> u32> {
+    fn by_month(self) -> GroupBy<u32, Self, fn(&NaiveDate) -> u32> {
         self.group_by(NaiveDate::month as fn(&NaiveDate) -> u32)
     }
 }
@@ -163,7 +255,7 @@ fn test_by_month() {
 ///
 
 trait ByWeek: DateIterator + Sized {
-    fn by_week(self) -> itertools::GroupBy<u32, Self, fn(&NaiveDate) -> u32> {
+    fn by_week(self) -> GroupBy<u32, Self, fn(&NaiveDate) -> u32> {
         self.group_by(to_iso_week)
     }
 }
@@ -308,7 +400,7 @@ trait FormatMonth: DateIterator + Sized {
             std::option::IntoIter<String>,
             std::iter::Map<
                 std::iter::Map<
-                    itertools::GroupBy<
+                    GroupBy<
                         u32,
                         std::iter::Peekable<Self>,
                         fn(&NaiveDate) -> u32
@@ -373,7 +465,7 @@ where Self::Item: DateIterator {
                 std::option::IntoIter<String>,
                 std::iter::Map<
                     std::iter::Map<
-                        itertools::GroupBy<
+                        GroupBy<
                             u32,
                             std::iter::Peekable<Self::Item>,
                             fn(&NaiveDate) -> u32
@@ -390,7 +482,7 @@ where Self::Item: DateIterator {
                 std::option::IntoIter<String>,
                 std::iter::Map<
                     std::iter::Map<
-                        itertools::GroupBy<
+                        GroupBy<
                             u32,
                             std::iter::Peekable<Self::Item>,
                             fn(&NaiveDate) -> u32
