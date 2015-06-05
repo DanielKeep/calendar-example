@@ -495,8 +495,7 @@ const COLS_PER_WEEK: u32 = 7 * COLS_PER_DAY;
 /// Formats an iterator of weeks into an iterator of strings.
 ///
 trait FormatWeeks: Iterator<Item=Vec<NaiveDate>> + Sized {
-    fn format_weeks<It>(self) -> std::iter::Map<Self, fn(Vec<NaiveDate>) -> String>
-    where It: Iterator<Item=Vec<NaiveDate>> {
+    fn format_weeks(self) -> std::iter::Map<Self, fn(Vec<NaiveDate>) -> String> {
         self.map(format_week as fn(Vec<NaiveDate>) -> String)
     }
 }
@@ -524,15 +523,13 @@ fn format_week(week: Vec<NaiveDate>) -> String {
 #[cfg(test)]
 #[test]
 fn test_format_weeks() {
-    // NOTE: Unfortunately, using `format_weeks` *here* appears to terminally confuse the type checker; it can't seem to work out what the type of the result should be.  Instead, I've just written it out directly.
     let jan_2013 = dates_in_year(2013)
         .by_month().next() // pick January 2013 for testing purposes
         // NOTE: This `map` is because `next` returns an `Option<_>`.
         .map(|(_, month)| month.into_iter()
             .by_week()
             .map(|(_, weeks)| weeks)
-            // .format_weeks()
-            .map(format_week)
+            .format_weeks()
             .collect::<Vec<_>>()
             .connect("\n"));
 
