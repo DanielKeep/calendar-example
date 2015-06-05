@@ -386,13 +386,20 @@ fn test_group_by() {
 ///
 /// Groups an iterator of dates by month.
 ///
-trait ByMonth: DateIterator + Sized {
-    fn by_month(self) -> GroupBy<u32, Self, fn(&NaiveDate) -> u32> {
-        self.group_by(NaiveDate::month as fn(&NaiveDate) -> u32)
-    }
+
+trait ByMonth<'a>: DateIterator {
+    type Months: 'a;
+
+    fn by_month(self) -> Self::Months;
 }
 
-impl<It> ByMonth for It where It: DateIterator {}
+impl<'a, It> ByMonth<'a> for It where It: DateIterator {
+    type Months = impl Iterator<Item=(u32, Vec<NaiveDate>)> + 'a;
+
+    fn by_month(self) -> Self::Months {
+        self.group_by(|d| d.month())
+    }
+}
 
 #[cfg(test)]
 #[test]
@@ -410,17 +417,19 @@ fn test_by_month() {
 /// Groups an iterator of dates by week.
 ///
 
-trait ByWeek: DateIterator + Sized {
-    fn by_week(self) -> GroupBy<u32, Self, fn(&NaiveDate) -> u32> {
-        self.group_by(to_iso_week)
-    }
+trait ByWeek<'a>: DateIterator {
+    type Weeks: 'a;
+
+    fn by_week(self) -> Self::Weeks;
 }
 
-impl<It> ByWeek for It where It: DateIterator {}
+impl<'a, It> ByWeek<'a> for It where It: DateIterator {
+    type Weeks = impl Iterator<Item=(u32, Vec<NaiveDate>)> + 'a;
 
-fn to_iso_week(date: &NaiveDate) -> u32 {
-    // We go forward one day because `isoweekdate` considers the week to start on a Monday.
-    date.succ().isoweekdate().1
+    fn by_week(self) -> Self::Weeks {
+        // We go forward one day because `isoweekdate` considers the week to start on a Monday.
+        self.group_by(|d| d.succ().isoweekdate().1)
+    }
 }
 
 #[cfg(test)]
@@ -494,14 +503,20 @@ const COLS_PER_WEEK: u32 = 7 * COLS_PER_DAY;
 ///
 /// Formats an iterator of weeks into an iterator of strings.
 ///
-trait FormatWeeks: Iterator<Item=Vec<NaiveDate>> + Sized {
-    fn format_weeks<It>(self) -> std::iter::Map<Self, fn(Vec<NaiveDate>) -> String>
-    where It: Iterator<Item=Vec<NaiveDate>> {
-        self.map(format_week as fn(Vec<NaiveDate>) -> String)
-    }
+
+trait FormatWeeks<'a>: Iterator<Item=Vec<NaiveDate>> {
+    type WeekDays: 'a;
+
+    fn format_weeks(self) -> Self::WeekDays;
 }
 
-impl<It> FormatWeeks for It where It: Iterator<Item=Vec<NaiveDate>> {}
+impl<'a, It> FormatWeeks<'a> for It where It: Iterator<Item=Vec<NaiveData>> {
+    type WeekDays = impl Iterator<String> + 'a;
+
+    fn format_weeks(self) -> Self::WeekDays {
+        self.map(format_week)
+    }
+}
 
 fn format_week(week: Vec<NaiveDate>) -> String {
     let mut buf = String::with_capacity((COLS_PER_DAY * COLS_PER_WEEK + 2) as usize);
@@ -580,26 +595,16 @@ fn test_month_title() {
 /// Formats a month.
 ///
 
-// NOTE: Here's a *perfect* example of just *why* people want Rust to get abstract return types.  Do note that if we did the `join("\n")` in this function, the return type would just be `String`.
+trait FormatMonth<'a>: DateIterator {
+    type MonthLines: 'a;
 
-trait FormatMonth: DateIterator + Sized {
-    fn format_month(self)
-    -> /* *deep breath* */
-        std::iter::Chain<
-            std::option::IntoIter<String>,
-            std::iter::Map<
-                std::iter::Map<
-                    GroupBy<
-                        u32,
-                        std::iter::Peekable<Self>,
-                        fn(&NaiveDate) -> u32
-                    >,
-                    fn((u32, Vec<NaiveDate>)) -> Vec<NaiveDate>
-                >,
-                fn(Vec<NaiveDate>) -> String
-            >
-        >
-    {
+    fn format_month(self) -> Self::MonthLines;
+}
+
+impl<'a, It> FormatMonth<'a> for It where It: DateIterator {
+    type MonthLines = impl Iterator<Item=String> + 'a;
+
+    fn format_month(self) -> Self::MonthLines {
         let mut month_days = self.peekable();
         let title = month_title(month_days.peek().unwrap().month());
 
@@ -613,8 +618,6 @@ trait FormatMonth: DateIterator + Sized {
                 .map(format_week as fn(Vec<NaiveDate>) -> String))
     }
 }
-
-impl<It> FormatMonth for It where It: DateIterator {}
 
 #[cfg(test)]
 #[test]
@@ -641,51 +644,22 @@ fn test_format_month() {
 /// Formats an iterator of months.
 ///
 
-// NOTE: Yes, this really is all just to abstract a single method call.
-
-trait FormatMonths: Iterator + Sized
+trait FormatMonths<'a>: Iterator
 where Self::Item: DateIterator {
-    fn format_months(self)
-    ->
-        std::iter::Map<
-            Self,
-            fn(Self::Item)
-            -> std::iter::Chain<
-                std::option::IntoIter<String>,
-                std::iter::Map<
-                    std::iter::Map<
-                        GroupBy<
-                            u32,
-                            std::iter::Peekable<Self::Item>,
-                            fn(&NaiveDate) -> u32
-                        >,
-                        fn((u32, Vec<NaiveDate>)) -> Vec<NaiveDate>
-                    >,
-                    fn(Vec<NaiveDate>) -> String
-                >
-            >
-        >
-    {
-        let f: fn(Self::Item)
-            -> std::iter::Chain<
-                std::option::IntoIter<String>,
-                std::iter::Map<
-                    std::iter::Map<
-                        GroupBy<
-                            u32,
-                            std::iter::Peekable<Self::Item>,
-                            fn(&NaiveDate) -> u32
-                        >,
-                        fn((u32, Vec<NaiveDate>)) -> Vec<NaiveDate>
-                    >,
-                    fn(Vec<NaiveDate>) -> String
-                >
-            > = Self::Item::format_month;
-        self.map(f)
-    }
+    // I gave up trying to remember WTF this should be called.
+    type Output: 'a;
+
+    fn format_months(self) -> Self::Output;
 }
 
-impl<It> FormatMonths for It where It: Iterator, It::Item: DateIterator {}
+impl<'a, It, E> FormatMonths<'a> for It
+where It: Iterator<Item=E>, E: DateIterator {
+    type Output = impl Iterator<Item=impl Iterator<Item=String> + 'a> + 'a;
+
+    fn format_months(self) -> Self::Output {
+        self.map(Self::Item::format_month)
+    }
+}
 
 ///
 /// Takes an iterator of iterators of strings; the sub-iterators are consumed
