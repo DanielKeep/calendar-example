@@ -279,6 +279,27 @@ fn to_iso_week(date: &NaiveDate) -> u32 {
 
 #[cfg(test)]
 #[test]
+fn test_isoweekdate() {
+    let mut weeks = dates_in_year(1984).map(|d| d.isoweekdate())
+        .map(|(y,w,_)| (y,w));
+    let mut weeks_uniq = vec![];
+    let mut accum = (weeks.next().unwrap(), 1);
+    for yw in weeks {
+        if accum.0 == yw {
+            accum.1 += 1;
+        } else {
+            weeks_uniq.push(accum);
+            accum = (yw, 1);
+        }
+    }
+    weeks_uniq.push(accum);
+
+    assert_eq!(&weeks_uniq[..2], &[((1983, 52), 1), ((1984, 1), 7)]);
+    assert_eq!(&weeks_uniq[weeks_uniq.len()-2..], &[((1984, 52), 7), ((1985, 1), 1)]);
+}
+
+#[cfg(test)]
+#[test]
 fn test_by_week() {
     let mut weeks = dates_in_year(2013).by_week();
     assert_eq!(
