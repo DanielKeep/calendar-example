@@ -188,22 +188,30 @@ fn to_iso_week(date: &NaiveDate) -> u32 {
 #[cfg(test)]
 #[test]
 fn test_isoweekdate() {
-    let mut weeks = dates_in_year(1984).map(|d| d.isoweekdate())
-        .map(|(y,w,_)| (y,w));
-    let mut weeks_uniq = vec![];
-    let mut accum = (weeks.next().unwrap(), 1);
-    for yw in weeks {
-        if accum.0 == yw {
-            accum.1 += 1;
-        } else {
-            weeks_uniq.push(accum);
-            accum = (yw, 1);
+    fn weeks_uniq(year: i32) -> Vec<((i32, u32), u32)> {
+        let mut weeks = dates_in_year(year).map(|d| d.isoweekdate())
+            .map(|(y,w,_)| (y,w));
+        let mut result = vec![];
+        let mut accum = (weeks.next().unwrap(), 1);
+        for yw in weeks {
+            if accum.0 == yw {
+                accum.1 += 1;
+            } else {
+                result.push(accum);
+                accum = (yw, 1);
+            }
         }
+        result.push(accum);
+        result
     }
-    weeks_uniq.push(accum);
 
-    assert_eq!(&weeks_uniq[..2], &[((1983, 52), 1), ((1984, 1), 7)]);
-    assert_eq!(&weeks_uniq[weeks_uniq.len()-2..], &[((1984, 52), 7), ((1985, 1), 1)]);
+    let wu_1984 = weeks_uniq(1984);
+    assert_eq!(&wu_1984[..2], &[((1983, 52), 1), ((1984, 1), 7)]);
+    assert_eq!(&wu_1984[wu_1984.len()-2..], &[((1984, 52), 7), ((1985, 1), 1)]);
+
+    let wu_2013 = weeks_uniq(2013);
+    assert_eq!(&wu_2013[..2], &[((2013, 1), 6), ((2013, 2), 7)]);
+    assert_eq!(&wu_2013[wu_2013.len()-2..], &[((2013, 52), 7), ((2014, 1), 2)]);
 }
 
 #[cfg(test)]
