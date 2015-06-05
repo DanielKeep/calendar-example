@@ -17,6 +17,7 @@ fn spaces(n: usize) -> std::iter::Take<std::iter::Repeat<char>> {
 #[cfg(test)]
 #[test]
 fn test_spaces() {
+    assert_eq!(spaces(0).collect::<String>(), "");
     assert_eq!(spaces(10).collect::<String>(), "          ")
 }
 
@@ -75,6 +76,15 @@ fn test_dates_in_year() {
         // Check length of year
         let mut dates = dates_in_year(2013);
         for _ in 0..365 {
+            assert!(dates.next() != None);
+        }
+        assert_eq!(dates.next(), None);
+    }
+
+    {
+        // Check length of leap year
+        let mut dates = dates_in_year(1984);
+        for _ in 0..366 {
             assert!(dates.next() != None);
         }
         assert_eq!(dates.next(), None);
