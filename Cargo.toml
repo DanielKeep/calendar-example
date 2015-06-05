@@ -1,0 +1,12 @@
+[package]
+name = "calendar"
+version = "0.1.0"
+authors = ["Daniel Keep <daniel.keep@gmail.com>"]
+
+[dependencies]
+chrono = "0.2.14"
+itertools = "0.3.10"
+
+[[bin]]
+name = "calendar"
+path = "bin.rs"
