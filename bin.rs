@@ -4,35 +4,132 @@
 
 /// Date representation.
 #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct NaiveDate;
+struct NaiveDate(i32, u32, u32);
 
 impl NaiveDate {
-    pub fn from_ymd(_y: i32, _m: u32, _d: u32) -> NaiveDate {
-        unimplemented!()
+    pub fn from_ymd(y: i32, m: u32, d: u32) -> NaiveDate {
+        assert!(1 <= m && m <= 12, "m = {:?}", m);
+        assert!(1 <= d && d <= NaiveDate(y, m, 1).days_in_month(), "d = {:?}", d);
+        NaiveDate(y, m, d)
     }
 
     pub fn year(&self) -> i32 {
-        unimplemented!()
+        self.0
     }
 
     pub fn month(&self) -> u32 {
-        unimplemented!()
+        self.1
     }
 
     pub fn day(&self) -> u32 {
-        unimplemented!()
+        self.2
     }
 
     pub fn succ(&self) -> NaiveDate {
-        unimplemented!()
+        let (mut y, mut m, mut d, n) = (
+            self.year(), self.month(), self.day()+1, self.days_in_month());
+        if d > n {
+            d = 1;
+            m += 1;
+        }
+        if m > 12 {
+            m = 1;
+            y += 1;
+        }
+        NaiveDate::from_ymd(y, m, d)
     }
 
     pub fn weekday(&self) -> Weekday {
-        unimplemented!()
+        use Weekday::*;
+
+        // 0 = Sunday
+        let year = self.year();
+        let dow_jan_1 = (year*365 + ((year-1) / 4) - ((year-1) / 100) + ((year-1) / 400)) % 7;
+        let dow = (dow_jan_1 + (self.day_of_year() as i32 - 1)) % 7;
+        [Sun, Mon, Tue, Wed, Thu, Fri, Sat][dow as usize]
     }
 
     pub fn isoweekdate(&self) -> (i32, u32, Weekday) {
-        unimplemented!()
+        let first_dow_mon_0 = self.year_first_day_of_week().num_days_from_monday();
+
+        // Work out this date's DOtY and week number, not including year adjustment.
+        let doy_0 = self.day_of_year() - 1;
+        let mut week_mon_0: i32 = ((first_dow_mon_0 + doy_0) / 7) as i32;
+
+        if self.first_week_in_prev_year() {
+            week_mon_0 -= 1;
+        }
+
+        let weeks_in_year = self.last_week_number();
+
+        // Work out the final result.  If the week is -1 or >= weeks_in_year, we will need to adjust the year.
+        let year = self.year();
+        let wd = self.weekday();
+
+        if week_mon_0 < 0 {
+            (year - 1, NaiveDate::from_ymd(year - 1, 1, 1).last_week_number(), wd)
+        } else if week_mon_0 >= weeks_in_year as i32 {
+            (year + 1, (week_mon_0 + 1 - weeks_in_year as i32) as u32, wd)
+        } else {
+            (year, (week_mon_0 + 1) as u32, wd)
+        }
+    }
+
+    fn first_week_in_prev_year(&self) -> bool {
+        let first_dow_mon_0 = self.year_first_day_of_week().num_days_from_monday();
+
+        // Any day in the year *before* the first Monday of that year is considered to be in the last week of the previous year, assuming the first week has *less* than four days in it.  Adjust the week appropriately.
+        ((7 - first_dow_mon_0) % 7) < 4
+    }
+
+    fn year_first_day_of_week(&self) -> Weekday {
+        NaiveDate::from_ymd(self.year(), 1, 1).weekday()
+    }
+
+    fn weeks_in_year(&self) -> u32 {
+        let days_in_last_week = self.year_first_day_of_week().num_days_from_monday() + 1;
+        if days_in_last_week >= 4 { 53 } else { 52 }
+    }
+
+    fn last_week_number(&self) -> u32 {
+        let wiy = self.weeks_in_year();
+        if self.first_week_in_prev_year() { wiy - 1 } else { wiy }
+    }
+
+    fn day_of_year(&self) -> u32 {
+        (1..self.1).map(|m| NaiveDate::from_ymd(self.year(), m, 1).days_in_month())
+            .fold(0, |a,b| a+b) + self.day()
+    }
+
+    fn is_leap_year(&self) -> bool {
+        let year = self.year();
+        if year % 4 != 0 {
+            return false
+        } else if year % 100 != 0 {
+            return true
+        } else if year % 400 != 0 {
+            return false
+        } else {
+            return true
+        }
+    }
+
+    fn days_in_month(&self) -> u32 {
+        match self.month() {
+            /* Jan */ 1 => 31,
+            /* Feb */ 2 => if self.is_leap_year() { 29 } else { 28 },
+            /* Mar */ 3 => 31,
+            /* Apr */ 4 => 30,
+            /* May */ 5 => 31,
+            /* Jun */ 6 => 30,
+            /* Jul */ 7 => 31,
+            /* Aug */ 8 => 31,
+            /* Sep */ 9 => 30,
+            /* Oct */ 10 => 31,
+            /* Nov */ 11 => 30,
+            /* Dec */ 12 => 31,
+            _ => unreachable!()
+        }
     }
 }
 
@@ -48,27 +145,70 @@ pub enum Weekday {
 }
 
 impl Weekday {
+    pub fn num_days_from_monday(&self) -> u32 {
+        use Weekday::*;
+        match *self {
+            Mon => 0,
+            Tue => 1,
+            Wed => 2,
+            Thu => 3,
+            Fri => 4,
+            Sat => 5,
+            Sun => 6,
+        }
+    }
+
     pub fn num_days_from_sunday(&self) -> u32 {
-        unimplemented!()
+        use Weekday::*;
+        match *self {
+            Sun => 0,
+            Mon => 1,
+            Tue => 2,
+            Wed => 3,
+            Thu => 4,
+            Fri => 5,
+            Sat => 6,
+        }
     }
 }
 
 /// GroupBy implementation.
 struct GroupBy<G, It, F>
 where It: Iterator,
-    F: FnMut(&It::Item) -> G
+    F: FnMut(&It::Item) -> G,
+    G: Eq,
 {
-    _dummy: (G, It, F),
+    it: It,
+    g: F,
+    next: Option<It::Item>,
 }
 
 impl<G, It, F> Iterator for GroupBy<G, It, F>
 where It: Iterator,
-    F: FnMut(&It::Item) -> G
+    F: FnMut(&It::Item) -> G,
+    G: Eq
 {
     type Item = (G, Vec<It::Item>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        unimplemented!()
+        match self.next.take().or_else(|| self.it.next()) {
+            None => None,
+            Some(e) => {
+                let key = (self.g)(&e);
+                let mut vs = vec![e];
+                'fill_group:
+                for e in self.it.by_ref() {
+                    match key == (self.g)(&e) {
+                        true => vs.push(e),
+                        false => {
+                            self.next = Some(e);
+                            break 'fill_group;
+                        }
+                    }
+                }
+                Some((key, vs))
+            }
+        }
     }
 }
 
@@ -78,9 +218,15 @@ trait IteratorExt: Iterator + Sized {
         for e in self { f(e) }
     }
 
-    fn group_by<G, F>(self, _g: F) -> GroupBy<G, Self, F>
-    where F: FnMut(&Self::Item) -> G {
-        unimplemented!()
+    fn group_by<G, F>(self, g: F) -> GroupBy<G, Self, F>
+    where F: FnMut(&Self::Item) -> G,
+        G: Eq
+    {
+        GroupBy {
+            it: self,
+            g: g,
+            next: None,
+        }
     }
 
     fn join(mut self, sep: &str) -> String
@@ -710,7 +856,17 @@ fn format_year(year: i32, months_per_row: usize) -> String {
 fn test_format_year() {
     const MONTHS_PER_ROW: usize = 3;
 
-    assert_eq!(&format_year(1984, MONTHS_PER_ROW), "\
+    macro_rules! assert_eq_cal {
+        ($lhs:expr, $rhs:expr) => {
+            if $lhs != $rhs {
+                println!("got:\n```\n{}\n```\n", $lhs.replace(" ", "."));
+                println!("expected:\n```\n{}\n```", $rhs.replace(" ", "."));
+                panic!("calendars didn't match!");
+            }
+        }
+    }
+
+    assert_eq_cal!(&format_year(1984, MONTHS_PER_ROW), "\
 \x20      January              February                March        \n\
 \x20 1  2  3  4  5  6  7            1  2  3  4               1  2  3\n\
 \x20 8  9 10 11 12 13 14   5  6  7  8  9 10 11   4  5  6  7  8  9 10\n\
@@ -741,7 +897,7 @@ fn test_format_year() {
 \x2028 29 30 31           25 26 27 28 29 30     23 24 25 26 27 28 29\n\
 \x20                                            30 31               ");
 
-    assert_eq!(&format_year(2015, MONTHS_PER_ROW), "\
+    assert_eq_cal!(&format_year(2015, MONTHS_PER_ROW), "\
 \x20      January              February                March        \n\
 \x20             1  2  3   1  2  3  4  5  6  7   1  2  3  4  5  6  7\n\
 \x20 4  5  6  7  8  9 10   8  9 10 11 12 13 14   8  9 10 11 12 13 14\n\
