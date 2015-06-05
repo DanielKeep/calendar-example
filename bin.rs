@@ -252,8 +252,6 @@ fn spaces(n: usize) -> std::iter::Take<std::iter::Repeat<char>> {
     std::iter::repeat(' ').take(n)
 }
 
-#[test]
-#[cfg(test)]
 fn test_spaces() {
     assert_eq!(spaces(0).collect::<String>(), "");
     assert_eq!(spaces(10).collect::<String>(), "          ")
@@ -291,8 +289,6 @@ impl Iterator for DatesInYear {
     }
 }
 
-#[cfg(test)]
-#[test]
 fn test_dates_in_year() {
     {
         let mut dates = dates_in_year(2013);
@@ -349,8 +345,6 @@ To give you an idea of how involved it can be, see:
 <https://github.com/DanielKeep/rust-grabbag/blob/master/src/iter/group_by.rs>.
 */
 
-#[cfg(test)]
-#[test]
 fn test_group_by() {
     let input = [
         [1, 1],
@@ -401,8 +395,6 @@ impl<'a, It> ByMonth<'a> for It where It: DateIterator {
     }
 }
 
-#[cfg(test)]
-#[test]
 fn test_by_month() {
     let mut months = dates_in_year(2013).by_month();
     {
@@ -432,8 +424,6 @@ impl<'a, It> ByWeek<'a> for It where It: DateIterator {
     }
 }
 
-#[cfg(test)]
-#[test]
 fn test_isoweekdate() {
     fn weeks_uniq(year: i32) -> Vec<((i32, u32), u32)> {
         let mut weeks = dates_in_year(year).map(|d| d.isoweekdate())
@@ -465,8 +455,6 @@ fn test_isoweekdate() {
     assert_eq!(&wu_2015[wu_2015.len()-2..], &[((2015, 52), 7), ((2015, 53), 4)]);
 }
 
-#[cfg(test)]
-#[test]
 fn test_by_week() {
     let mut weeks = dates_in_year(2013).by_week();
     assert_eq!(
@@ -536,18 +524,14 @@ fn format_week(week: Vec<NaiveDate>) -> String {
     buf
 }
 
-#[cfg(test)]
-#[test]
 fn test_format_weeks() {
-    // NOTE: Unfortunately, using `format_weeks` *here* appears to terminally confuse the type checker; it can't seem to work out what the type of the result should be.  Instead, I've just written it out directly.
     let jan_2013 = dates_in_year(2013)
         .by_month().next() // pick January 2013 for testing purposes
         // NOTE: This `map` is because `next` returns an `Option<_>`.
         .map(|(_, month)| month.into_iter()
             .by_week()
             .map(|(_, weeks)| weeks)
-            // .format_weeks()
-            .map(format_week)
+            .format_weeks()
             .collect::<Vec<_>>()
             .connect("\n"));
 
@@ -585,8 +569,6 @@ fn month_title(month: u32) -> String {
     result
 }
 
-#[cfg(test)]
-#[test]
 fn test_month_title() {
     assert_eq!(month_title(1).len(), COLS_PER_WEEK as usize);
 }
@@ -619,8 +601,6 @@ impl<'a, It> FormatMonth<'a> for It where It: DateIterator {
     }
 }
 
-#[cfg(test)]
-#[test]
 fn test_format_month() {
     let month_fmt = dates_in_year(2013)
         .by_month().next() // Pick January as a test case
@@ -726,8 +706,6 @@ where StrIt: Iterator<Item=String> {
     }
 }
 
-#[cfg(test)]
-#[test]
 fn test_paste_blocks() {
     let row = dates_in_year(2013)
         .by_month().map(|(_, days)| days.into_iter())
@@ -788,8 +766,6 @@ where It: Iterator {
     }
 }
 
-#[cfg(test)]
-#[test]
 fn test_chunks() {
     let r = &[1, 2, 3, 4, 5, 6, 7];
     let c = r.iter().cloned().chunks(3).collect::<Vec<_>>();
@@ -825,8 +801,6 @@ fn format_year(year: i32, months_per_row: usize) -> String {
         .join("\n\n")
 }
 
-#[cfg(test)]
-#[test]
 fn test_format_year() {
     const MONTHS_PER_ROW: usize = 3;
 
@@ -903,22 +877,18 @@ fn test_format_year() {
 \x2025 26 27 28 29 30 31  29 30                 27 28 29 30 31      ");
 }
 
-#[cfg(not(test))]
 fn main() {
-    use std::env;
-
-    let mut args = env::args();
-    let exe = args.next().unwrap();
-
-    let year = match args.next() {
-        None => {
-            println!("Usage: {} YEAR", exe);
-            return
-        }
-        Some(arg) => arg.parse().ok().expect("expected integer year")
-    };
-
-    // Print the calendar.
-    const MONTHS_PER_ROW: usize = 3;
-    println!("{}", format_year(year, MONTHS_PER_ROW));
+    // Run tests.
+    test_spaces();
+    test_dates_in_year();
+    test_group_by();
+    test_by_month();
+    test_isoweekdate();
+    test_by_week();
+    test_format_weeks();
+    test_month_title();
+    test_format_month();
+    test_paste_blocks();
+    test_chunks();
+    test_format_year();
 }
