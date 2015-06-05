@@ -381,7 +381,7 @@ fn test_group_by() {
 /// Groups an iterator of dates by month.
 ///
 
-trait ByMonth<'a>: DateIterator {
+trait ByMonth<'a> {
     type Months: 'a;
 
     fn by_month(self) -> Self::Months;
@@ -409,7 +409,7 @@ fn test_by_month() {
 /// Groups an iterator of dates by week.
 ///
 
-trait ByWeek<'a>: DateIterator {
+trait ByWeek<'a> {
     type Weeks: 'a;
 
     fn by_week(self) -> Self::Weeks;
@@ -492,7 +492,7 @@ const COLS_PER_WEEK: u32 = 7 * COLS_PER_DAY;
 /// Formats an iterator of weeks into an iterator of strings.
 ///
 
-trait FormatWeeks<'a>: Iterator<Item=Vec<NaiveDate>> {
+trait FormatWeeks<'a> {
     type WeekDays: 'a;
 
     fn format_weeks(self) -> Self::WeekDays;
@@ -577,7 +577,7 @@ fn test_month_title() {
 /// Formats a month.
 ///
 
-trait FormatMonth<'a>: DateIterator {
+trait FormatMonth<'a> {
     type MonthLines: 'a;
 
     fn format_month(self) -> Self::MonthLines;
@@ -624,8 +624,7 @@ fn test_format_month() {
 /// Formats an iterator of months.
 ///
 
-trait FormatMonths<'a>: Iterator
-where Self::Item: DateIterator {
+trait FormatMonths<'a> {
     // I gave up trying to remember WTF this should be called.
     type Output: 'a;
 
