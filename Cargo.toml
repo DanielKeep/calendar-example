@@ -4,8 +4,8 @@ version = "0.1.0"
 authors = ["Daniel Keep <daniel.keep@gmail.com>"]
 
 [dependencies]
-chrono = "0.2.14"
-itertools = "0.3.10"
+chrono = "0.2.25"
+itertools = "0.4.17"
 
 [[bin]]
 name = "calendar"

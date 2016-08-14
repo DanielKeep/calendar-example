@@ -1,5 +1,6 @@
 //! Derived from:
 //! <https://raw.githubusercontent.com/quickfur/dcal/master/dcal.d>.
+#![feature(conservative_impl_trait)]
 
 extern crate chrono;
 extern crate itertools;
@@ -10,7 +11,7 @@ use itertools::Itertools;
 ///
 /// Generates an iterator that yields exactly n spaces.
 ///
-fn spaces(n: usize) -> std::iter::Take<std::iter::Repeat<char>> {
+fn spaces(n: usize) -> impl Iterator<Item=char> {
     std::iter::repeat(' ').take(n)
 }
 
@@ -22,35 +23,38 @@ fn test_spaces() {
 }
 
 ///
-/// Returns an iterator of dates in a given year.
+/// Returns an iterator built from the specified `next` function.
 ///
+fn stepping<Step, Item>(step: Step) -> impl Iterator<Item=Item>
+where Step: FnMut() -> Option<Item> {
+    // This is what is known in D as a "Voldemort Type".
+    struct It<F>(F);
 
-// NOTE: In the spirit of the D example, we generate a lazy sequence.  Sadly, since Rust lacks return type deduction, this is rather more verbose that it might otherwise need to be.  An additional pain is that closure types are unnamed, so we can't use those *either*.
+    impl<F, I> Iterator for It<F> where F: FnMut() -> Option<I> {
+        type Item = I;
 
-fn dates_in_year(year: i32) -> DatesInYear {
-    DatesInYear {
-        next: NaiveDate::from_ymd(year, 1, 1),
-        in_year: year,
-    }
-}
-
-struct DatesInYear {
-    next: NaiveDate,
-    in_year: i32,
-}
-
-impl Iterator for DatesInYear {
-    type Item = NaiveDate;
-
-    fn next(&mut self) -> Option<NaiveDate> {
-        if self.next.year() > self.in_year {
-            None
-        } else {
-            let item = self.next;
-            self.next = self.next.succ();
-            Some(item)
+        fn next(&mut self) -> Option<I> {
+            (self.0)()
         }
     }
+
+    It(step)
+}
+
+///
+/// Returns an iterator of dates in a given year.
+///
+fn dates_in_year(year: i32) -> impl Iterator<Item=NaiveDate> {
+    let mut cur = NaiveDate::from_ymd(year, 1, 1);
+    stepping(move || {
+        if cur.year() != year {
+            None
+        } else {
+            let item = cur;
+            cur = cur.succ();
+            Some(item)
+        }
+    })
 }
 
 #[cfg(test)]
@@ -92,6 +96,18 @@ fn test_dates_in_year() {
 }
 
 ///
+/// This trait works around not being able to use `impl Trait` on trait methods
+/// yet.
+///
+trait Apply: Sized {
+    fn apply<F, R>(self, f: F) -> R where F: FnOnce(Self) -> R {
+        f(self)
+    }
+}
+
+impl<T> Apply for T {}
+
+///
 /// Convenience trait for verifying that a given type iterates over
 /// `NaiveDate`s.
 ///
@@ -104,11 +120,10 @@ I am not doing an implementation of `chunkBy`.  Instead, I'll just use
 
 This is one place where Rust really bites us: the result of the D `chunkBy`
 is a lazy sequence of lazy sequences.  That is quite hard to do in Rust without
-a *mountain* of code.  Part of the problem is the implicit sharing that has to
-happen for it to work.
+significant complication.  Part of the problem is the implicit sharing that has
+to happen for it to work.
 
-To give you an idea of how involved it can be, see:
-<https://github.com/DanielKeep/rust-grabbag/blob/master/src/iter/group_by.rs>.
+To give you an idea of the problems, see `Itertools::group_by_lazy`.
 */
 
 #[cfg(test)]
@@ -148,18 +163,14 @@ fn test_group_by() {
 ///
 /// Groups an iterator of dates by month.
 ///
-trait ByMonth: DateIterator + Sized {
-    fn by_month(self) -> itertools::GroupBy<u32, Self, fn(&NaiveDate) -> u32> {
-        self.group_by(NaiveDate::month as fn(&NaiveDate) -> u32)
-    }
+fn by_month<It: DateIterator>(it: It) -> impl Iterator<Item=(u32, Vec<NaiveDate>)> {
+    it.group_by(NaiveDate::month)
 }
-
-impl<It> ByMonth for It where It: DateIterator {}
 
 #[cfg(test)]
 #[test]
 fn test_by_month() {
-    let mut months = dates_in_year(2013).by_month();
+    let mut months = dates_in_year(2013).apply(by_month);
     {
         for (month, (_, date)) in (1..13).zip(months.by_ref()) {
             assert_eq!(date[0], NaiveDate::from_ymd(2013, month, 1));
@@ -172,17 +183,9 @@ fn test_by_month() {
 /// Groups an iterator of dates by week.
 ///
 
-trait ByWeek: DateIterator + Sized {
-    fn by_week(self) -> itertools::GroupBy<u32, Self, fn(&NaiveDate) -> u32> {
-        self.group_by(to_iso_week)
-    }
-}
-
-impl<It> ByWeek for It where It: DateIterator {}
-
-fn to_iso_week(date: &NaiveDate) -> u32 {
+fn by_week<It: DateIterator>(it: It) -> impl Iterator<Item=(u32, Vec<NaiveDate>)> {
     // We go forward one day because `isoweekdate` considers the week to start on a Monday.
-    date.succ().isoweekdate().1
+    it.group_by(|date| date.succ().isoweekdate().1)
 }
 
 #[cfg(test)]
@@ -221,7 +224,7 @@ fn test_isoweekdate() {
 #[cfg(test)]
 #[test]
 fn test_by_week() {
-    let mut weeks = dates_in_year(2013).by_week();
+    let mut weeks = dates_in_year(2013).apply(by_week);
     assert_eq!(
         &*weeks.next().unwrap().1,
         &[
@@ -256,47 +259,38 @@ const COLS_PER_WEEK: u32 = 7 * COLS_PER_DAY;
 ///
 /// Formats an iterator of weeks into an iterator of strings.
 ///
-trait FormatWeeks: Iterator<Item=Vec<NaiveDate>> + Sized {
-    fn format_weeks<It>(self) -> std::iter::Map<Self, fn(Vec<NaiveDate>) -> String>
-    where It: Iterator<Item=Vec<NaiveDate>> {
-        self.map(format_week as fn(Vec<NaiveDate>) -> String)
-    }
-}
+fn format_weeks<It: Iterator<Item=Vec<NaiveDate>>>(it: It) -> impl Iterator<Item=String> {
+    it.map(|week| {
+        let mut buf = String::with_capacity((COLS_PER_DAY * COLS_PER_WEEK + 2) as usize);
 
-impl<It> FormatWeeks for It where It: Iterator<Item=Vec<NaiveDate>> {}
+        // Insert enough filler to align the first day with its respective day-of-week.
+        let start_day = week[0].weekday().num_days_from_sunday();
+        buf.extend(spaces((COLS_PER_DAY * start_day) as usize));
 
-fn format_week(week: Vec<NaiveDate>) -> String {
-    let mut buf = String::with_capacity((COLS_PER_DAY * COLS_PER_WEEK + 2) as usize);
+        // Format each day into its own cell and append to target string.
+        // NOTE: Three things: first, `days` is lazy, unlike with the D version.  Second, we can't directly extend a `String` with an `Iterator<Item=String>`, hence we use `foreach` from `itertools`.  Third, because `into_iter` *consumes* the subject, we have to get the length of the vec *before* that.
+        let num_days = week.len();
+        let mut days = week.into_iter().map(|d| format!(" {:>2}", d.day()));
+        days.foreach(|ds| buf.push_str(&ds));
 
-    // Insert enough filler to align the first day with its respective day-of-week.
-    let start_day = week[0].weekday().num_days_from_sunday();
-    buf.extend(spaces((COLS_PER_DAY * start_day) as usize));
-
-    // Format each day into its own cell and append to target string.
-    // NOTE: Three things: first, `days` is lazy, unlike with the D version.  Second, we can't directly extend a `String` with an `Iterator<Item=String>`, hence we use `foreach` from `itertools`.  Third, because `into_iter` *consumes* the subject, we have to get the length of the vec *before* that.
-    let num_days = week.len();
-    let mut days = week.into_iter().map(|d| format!(" {:>2}", d.day()));
-    days.foreach(|ds| buf.push_str(&ds));
-
-    // Insert more filler at the end to fill up the remainder of the week, if its a short week (e.g. at the end of the month).
-    buf.extend(spaces((COLS_PER_DAY * (7 - start_day - num_days as u32)) as usize));
-    buf
+        // Insert more filler at the end to fill up the remainder of the week, if its a short week (e.g. at the end of the month).
+        buf.extend(spaces((COLS_PER_DAY * (7 - start_day - num_days as u32)) as usize));
+        buf
+    })
 }
 
 #[cfg(test)]
 #[test]
 fn test_format_weeks() {
-    // NOTE: Unfortunately, using `format_weeks` *here* appears to terminally confuse the type checker; it can't seem to work out what the type of the result should be.  Instead, I've just written it out directly.
     let jan_2013 = dates_in_year(2013)
-        .by_month().next() // pick January 2013 for testing purposes
+        .apply(by_month).next() // pick January 2013 for testing purposes
         // NOTE: This `map` is because `next` returns an `Option<_>`.
         .map(|(_, month)| month.into_iter()
-            .by_week()
+            .apply(by_week)
             .map(|(_, weeks)| weeks)
-            // .format_weeks()
-            .map(format_week)
+            .apply(format_weeks)
             .collect::<Vec<_>>()
-            .connect("\n"));
+            .join("\n"));
 
     assert_eq!(
         jan_2013.as_ref().map(|s| &**s),
@@ -341,50 +335,23 @@ fn test_month_title() {
 ///
 /// Formats a month.
 ///
+fn format_month<It: DateIterator>(it: It) -> impl Iterator<Item=String> {
+    let mut month_days = it.peekable();
+    let title = month_title(month_days.peek().unwrap().month());
 
-// NOTE: Here's a *perfect* example of just *why* people want Rust to get abstract return types.  Do note that if we did the `join("\n")` in this function, the return type would just be `String`.
-
-trait FormatMonth: DateIterator + Sized {
-    fn format_month(self)
-    -> /* *deep breath* */
-        std::iter::Chain<
-            std::option::IntoIter<String>,
-            std::iter::Map<
-                std::iter::Map<
-                    itertools::GroupBy<
-                        u32,
-                        std::iter::Peekable<Self>,
-                        fn(&NaiveDate) -> u32
-                    >,
-                    fn((u32, Vec<NaiveDate>)) -> Vec<NaiveDate>
-                >,
-                fn(Vec<NaiveDate>) -> String
-            >
-        >
-    {
-        let mut month_days = self.peekable();
-        let title = month_title(month_days.peek().unwrap().month());
-
-        fn just_week((_, week): (u32, Vec<NaiveDate>)) -> Vec<NaiveDate> {
-            week
-        }
-
-        Some(title).into_iter()
-            .chain(month_days.by_week()
-                .map(just_week as fn((u32, Vec<NaiveDate>)) -> Vec<NaiveDate>)
-                .map(format_week as fn(Vec<NaiveDate>) -> String))
-    }
+    Some(title).into_iter()
+        .chain(month_days.apply(by_week)
+            .map(|(_, week)| week)
+            .apply(format_weeks))
 }
-
-impl<It> FormatMonth for It where It: DateIterator {}
 
 #[cfg(test)]
 #[test]
 fn test_format_month() {
     let month_fmt = dates_in_year(2013)
-        .by_month().next() // Pick January as a test case
+        .apply(by_month).next() // Pick January as a test case
         .map(|(_, days)| days.into_iter()
-            .format_month()
+            .apply(format_month)
             .join("\n"));
 
     assert_eq!(
@@ -398,119 +365,67 @@ fn test_format_month() {
     );
 }
 
-
 ///
 /// Formats an iterator of months.
 ///
-
-// NOTE: Yes, this really is all just to abstract a single method call.
-
-trait FormatMonths: Iterator + Sized
-where Self::Item: DateIterator {
-    fn format_months(self)
-    ->
-        std::iter::Map<
-            Self,
-            fn(Self::Item)
-            -> std::iter::Chain<
-                std::option::IntoIter<String>,
-                std::iter::Map<
-                    std::iter::Map<
-                        itertools::GroupBy<
-                            u32,
-                            std::iter::Peekable<Self::Item>,
-                            fn(&NaiveDate) -> u32
-                        >,
-                        fn((u32, Vec<NaiveDate>)) -> Vec<NaiveDate>
-                    >,
-                    fn(Vec<NaiveDate>) -> String
-                >
-            >
-        >
-    {
-        let f: fn(Self::Item)
-            -> std::iter::Chain<
-                std::option::IntoIter<String>,
-                std::iter::Map<
-                    std::iter::Map<
-                        itertools::GroupBy<
-                            u32,
-                            std::iter::Peekable<Self::Item>,
-                            fn(&NaiveDate) -> u32
-                        >,
-                        fn((u32, Vec<NaiveDate>)) -> Vec<NaiveDate>
-                    >,
-                    fn(Vec<NaiveDate>) -> String
-                >
-            > = Self::Item::format_month;
-        self.map(f)
-    }
+fn format_months<It, DIt>(it: It) -> impl Iterator<Item=impl Iterator<Item=String>>
+where
+    It: Iterator<Item=DIt>,
+    DIt: DateIterator,
+{
+    it.map(format_month)
 }
-
-impl<It> FormatMonths for It where It: Iterator, It::Item: DateIterator {}
 
 ///
 /// Takes an iterator of iterators of strings; the sub-iterators are consumed
 /// in lock-step, with their elements joined together.
 ///
-trait PasteBlocks: Iterator + Sized
-where Self::Item: Iterator<Item=String> {
-    fn paste_blocks(self, sep_width: usize) -> PasteBlocksIter<Self::Item> {
-        PasteBlocksIter {
-            iters: self.collect(),
-            cache: vec![],
-            col_widths: None,
-            sep_width: sep_width,
-        }
-    }
-}
+/// Returns a callable that can be passed to `Apply::apply`.
+///
+fn paste_blocks<It, IIt>(sep_width: usize)
+-> impl FnOnce(It) -> impl Iterator<Item=String>
+where
+    It: Iterator<Item=IIt>,
+    IIt: Iterator<Item=String>,
+{
+    move |it| {
+        let mut iters = it.collect_vec();
+        let mut cache = vec![];
+        let mut col_widths: Option<Vec<usize>> = None;
 
-impl<It> PasteBlocks for It where It: Iterator, It::Item: Iterator<Item=String> {}
+        stepping(move || {
+            cache.clear();
 
-struct PasteBlocksIter<StrIt>
-where StrIt: Iterator<Item=String> {
-    iters: Vec<StrIt>,
-    cache: Vec<Option<String>>,
-    col_widths: Option<Vec<usize>>,
-    sep_width: usize,
-}
+            // `cache` is now the next line from each iterator.
+            cache.extend(iters.iter_mut().map(|it| it.next()));
 
-impl<StrIt> Iterator for PasteBlocksIter<StrIt>
-where StrIt: Iterator<Item=String> {
-    type Item = String;
+            // If every line in `cache` is `None`, we have nothing further to do.
+            if cache.iter().all(|e| e.is_none()) { return None }
 
-    fn next(&mut self) -> Option<String> {
-        self.cache.clear();
+            // Get the column widths if we haven't already.
+            let col_widths = match col_widths {
+                Some(ref v) => &**v,
+                None => {
+                    col_widths = Some(cache.iter()
+                        .map(|ms| ms.as_ref().map(|s| s.len()).unwrap_or(0))
+                        .collect());
+                    &**col_widths.as_ref().unwrap()
+                }
+            };
 
-        // `cache` is now the next line from each iterator.
-        self.cache.extend(self.iters.iter_mut().map(|it| it.next()));
+            // Fill in any `None`s with spaces.
+            let mut parts = col_widths.iter().cloned().zip(cache.iter_mut())
+                .map(|(w,ms)| ms.take().unwrap_or_else(|| spaces(w).collect()));
 
-        // If every line in `cache` is `None`, we have nothing further to do.
-        if self.cache.iter().all(|e| e.is_none()) { return None }
-
-        // Get the column widths if we haven't already.
-        let col_widths = match self.col_widths {
-            Some(ref v) => &**v,
-            None => {
-                self.col_widths = Some(self.cache.iter()
-                    .map(|ms| ms.as_ref().map(|s| s.len()).unwrap_or(0))
-                    .collect());
-                &**self.col_widths.as_ref().unwrap()
-            }
-        };
-
-        // Fill in any `None`s with spaces.
-        let mut parts = col_widths.iter().cloned().zip(self.cache.iter_mut())
-            .map(|(w,ms)| ms.take().unwrap_or_else(|| spaces(w).collect()));
-
-        // Join them all together.
-        let first = parts.next().unwrap_or(String::new());
-        let sep_width = self.sep_width;
-        Some(parts.fold(first, |mut accum, next| {
-            accum.extend(spaces(sep_width));
-            accum.push_str(&next);
-            accum
-        }))
+            // Join them all together.
+            let first = parts.next().unwrap_or(String::new());
+            let sep_width = sep_width;
+            Some(parts.fold(first, |mut accum, next| {
+                accum.extend(spaces(sep_width));
+                accum.push_str(&next);
+                accum
+            }))
+        })
     }
 }
 
@@ -518,10 +433,10 @@ where StrIt: Iterator<Item=String> {
 #[test]
 fn test_paste_blocks() {
     let row = dates_in_year(2013)
-        .by_month().map(|(_, days)| days.into_iter())
+        .apply(by_month).map(|(_, days)| days.into_iter())
         .take(3)
-        .format_months()
-        .paste_blocks(1)
+        .apply(format_months)
+        .apply(paste_blocks(1))
         .join("\n");
     assert_eq!(
         &*row,
@@ -538,41 +453,29 @@ fn test_paste_blocks() {
 ///
 /// Produces an iterator that yields `n` elements at a time.
 ///
-trait Chunks: Iterator + Sized {
-    fn chunks(self, n: usize) -> ChunksIter<Self> {
-        assert!(n > 0);
-        ChunksIter {
-            it: self,
-            n: n,
-        }
-    }
-}
+fn chunks<It: Iterator>(n: usize) -> impl FnOnce(It) -> impl Iterator<Item=Vec<It::Item>> {
+    /*
+    **NOTE**: `chunks` in Rust is hard to implement without overhead of some
+    kind.  Aliasing rules mean you need to add dynamic borrow checking, and the
+    design of `Iterator` means that you need to have the iterator's state kept
+    in an allocation that is jointly owned by the iterator itself and the
+    sub-iterator.  As such, I've chosen to cop-out and just heap-allocate each
+    chunk.
+    */
+    assert!(n > 0);
+    move |mut it| {
+        stepping(move || {
+            let first = match it.next() {
+                Some(e) => e,
+                None => return None
+            };
 
-impl<It> Chunks for It where It: Iterator {}
+            let mut result = Vec::with_capacity(n);
+            result.push(first);
 
-struct ChunksIter<It>
-where It: Iterator {
-    it: It,
-    n: usize,
-}
-
-// NOTE: `chunks` in Rust is more-or-less impossible without overhead of some kind.  Aliasing rules mean you need to add dynamic borrow checking, and the design of `Iterator` means that you need to have the iterator's state kept in an allocation that is jointly owned by the iterator itself and the sub-iterator.  As such, I've chosen to cop-out and just heap-allocate each chunk.
-
-impl<It> Iterator for ChunksIter<It>
-where It: Iterator {
-    type Item = Vec<It::Item>;
-
-    fn next(&mut self) -> Option<Vec<It::Item>> {
-        let first = match self.it.next() {
-            Some(e) => e,
-            None => return None
-        };
-
-        let mut result = Vec::with_capacity(self.n);
-        result.push(first);
-
-        Some(self.it.by_ref().take(self.n-1)
-            .fold(result, |mut acc, next| { acc.push(next); acc }))
+            Some(it.by_ref().take(n-1)
+                .fold(result, |mut acc, next| { acc.push(next); acc }))
+        })
     }
 }
 
@@ -580,7 +483,7 @@ where It: Iterator {
 #[test]
 fn test_chunks() {
     let r = &[1, 2, 3, 4, 5, 6, 7];
-    let c = r.iter().cloned().chunks(3).collect::<Vec<_>>();
+    let c = r.iter().cloned().apply(chunks(3)).collect::<Vec<_>>();
     assert_eq!(&*c, &[vec![1, 2, 3], vec![4, 5, 6], vec![7]]);
 }
 
@@ -594,18 +497,18 @@ fn format_year(year: i32, months_per_row: usize) -> String {
     dates_in_year(year)
 
         // Group them by month and throw away month number.
-        .by_month().map(|(_, days)| days.into_iter())
+        .apply(by_month).map(|(_, days)| days.into_iter())
 
         // Group the months into horizontal rows.
-        .chunks(months_per_row)
+        .apply(chunks(months_per_row))
 
         // Format each row
         .map(|r| r.into_iter()
             // By formatting each month
-            .format_months()
+            .apply(format_months)
 
             // Horizontally pasting each respective month's lines together.
-            .paste_blocks(COL_SPACING)
+            .apply(paste_blocks(COL_SPACING))
             .join("\n")
         )
 
