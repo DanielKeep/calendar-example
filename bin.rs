@@ -161,22 +161,48 @@ fn test_group_by() {
 }
 
 ///
+/// This trait is used to return lazy iterables.
+///
+/// The reason we need a trait is that the bound we're interested in is
+/// *actually* implemented for *borrowed pointers* to the type we're returning,
+/// and we can't express that with `impl Trait` syntax.
+///
+// trait LazyIterable<'a>: Sized {
+//     type IntoIter: Iterator;
+//     fn iter_lazy(&'a self) -> Self::IntoIter;
+// }
+
+// impl<'a, It> LazyIterable<'a> for It where It: 'a, &'a It: IntoIterator {
+//     type IntoIter = <&'a It as IntoIterator>::IntoIter;
+//     fn iter_lazy(&'a self) -> <&'a It as IntoIterator>::IntoIter {
+//         self.into_iter()
+//     }
+// }
+
+///
 /// Groups an iterator of dates by month.
 ///
 fn by_month<It: DateIterator>(it: It) -> impl Iterator<Item=(u32, Vec<NaiveDate>)> {
     it.group_by(NaiveDate::month)
 }
 
+fn by_month_lazy<It: DateIterator>(it: It)
+-> itertools::GroupByLazy<u32, It, impl FnMut(&NaiveDate) -> u32> {
+    it.group_by_lazy(NaiveDate::month)
+}
+
 #[cfg(test)]
 #[test]
 fn test_by_month() {
-    let mut months = dates_in_year(2013).apply(by_month);
+    let months = dates_in_year(2013).apply(by_month_lazy);
+    let mut months = months.into_iter();
     {
-        for (month, (_, date)) in (1..13).zip(months.by_ref()) {
-            assert_eq!(date[0], NaiveDate::from_ymd(2013, month, 1));
+        for (month, (_, mut group)) in (1..13).zip(months.by_ref()) {
+            let first = group.next().unwrap();
+            assert_eq!(first, NaiveDate::from_ymd(2013, month, 1));
         }
     }
-    assert_eq!(months.next(), None);
+    assert!(months.next().is_none());
 }
 
 ///
@@ -186,6 +212,12 @@ fn test_by_month() {
 fn by_week<It: DateIterator>(it: It) -> impl Iterator<Item=(u32, Vec<NaiveDate>)> {
     // We go forward one day because `isoweekdate` considers the week to start on a Monday.
     it.group_by(|date| date.succ().isoweekdate().1)
+}
+
+fn by_week_lazy<It: DateIterator>(it: It)
+-> itertools::GroupByLazy<u32, It, impl FnMut(&NaiveDate) -> u32> {
+    // We go forward one day because `isoweekdate` considers the week to start on a Monday.
+    it.group_by_lazy(|date| date.succ().isoweekdate().1)
 }
 
 #[cfg(test)]
@@ -224,9 +256,10 @@ fn test_isoweekdate() {
 #[cfg(test)]
 #[test]
 fn test_by_week() {
-    let mut weeks = dates_in_year(2013).apply(by_week);
+    let weeks = dates_in_year(2013).apply(by_week_lazy);
+    let mut weeks = weeks.into_iter();
     assert_eq!(
-        &*weeks.next().unwrap().1,
+        &*weeks.next().unwrap().1.collect_vec(),
         &[
             NaiveDate::from_ymd(2013, 1, 1),
             NaiveDate::from_ymd(2013, 1, 2),
@@ -236,7 +269,7 @@ fn test_by_week() {
         ]
     );
     assert_eq!(
-        &*weeks.next().unwrap().1,
+        &*weeks.next().unwrap().1.collect_vec(),
         &[
             NaiveDate::from_ymd(2013, 1, 6),
             NaiveDate::from_ymd(2013, 1, 7),
@@ -247,7 +280,7 @@ fn test_by_week() {
             NaiveDate::from_ymd(2013, 1, 12),
         ]
     );
-    assert_eq!(weeks.next().unwrap().1[0], NaiveDate::from_ymd(2013, 1, 13));
+    assert_eq!(weeks.next().unwrap().1.next().unwrap(), NaiveDate::from_ymd(2013, 1, 13));
 }
 
 /// The number of columns per day in the formatted output.
@@ -259,38 +292,63 @@ const COLS_PER_WEEK: u32 = 7 * COLS_PER_DAY;
 ///
 /// Formats an iterator of weeks into an iterator of strings.
 ///
-fn format_weeks<It: Iterator<Item=Vec<NaiveDate>>>(it: It) -> impl Iterator<Item=String> {
-    it.map(|week| {
+fn format_weeks<It, IIt>(it: It) -> impl Iterator<Item=String>
+where
+    It: Iterator<Item=IIt>,
+    IIt: IntoIterator<Item=NaiveDate>,
+{
+    it.map(format_week)
+}
+
+fn format_week<It: IntoIterator<Item=NaiveDate>>(week: It) -> String {
+    {
         let mut buf = String::with_capacity((COLS_PER_DAY * COLS_PER_WEEK + 2) as usize);
 
-        // Insert enough filler to align the first day with its respective day-of-week.
-        let start_day = week[0].weekday().num_days_from_sunday();
+        // Insert enough filler to align the first day with its respective day-
+        // of-week.
+        let mut week = week.into_iter().peekable();
+        let start_day = week.peek().unwrap().weekday().num_days_from_sunday();
         buf.extend(spaces((COLS_PER_DAY * start_day) as usize));
 
         // Format each day into its own cell and append to target string.
-        // NOTE: Three things: first, `days` is lazy, unlike with the D version.  Second, we can't directly extend a `String` with an `Iterator<Item=String>`, hence we use `foreach` from `itertools`.  Third, because `into_iter` *consumes* the subject, we have to get the length of the vec *before* that.
-        let num_days = week.len();
-        let mut days = week.into_iter().map(|d| format!(" {:>2}", d.day()));
-        days.foreach(|ds| buf.push_str(&ds));
+        // **NOTE**: using `Write` here allows us to append to `buf` without any
+        // intermediate allocations.
+        let mut num_days = 0;
+        for day in week {
+            use std::fmt::Write;
+            write!(buf, " {:>2}", day.day()).unwrap();
+            num_days += 1;
+        }
 
-        // Insert more filler at the end to fill up the remainder of the week, if its a short week (e.g. at the end of the month).
-        buf.extend(spaces((COLS_PER_DAY * (7 - start_day - num_days as u32)) as usize));
+        // Insert more filler at the end to fill up the remainder of the week,
+        // if its a short week (e.g. at the end of the month).
+        buf.extend(spaces((COLS_PER_DAY * (7 - start_day - num_days)) as usize));
         buf
-    })
+    }
 }
 
 #[cfg(test)]
 #[test]
 fn test_format_weeks() {
-    let jan_2013 = dates_in_year(2013)
-        .apply(by_month).next() // pick January 2013 for testing purposes
+    let months_2013 = dates_in_year(2013)
+        .apply(by_month_lazy);
+    let jan_2013 = months_2013.into_iter()
+        .next() // pick January 2013 for testing purposes
         // NOTE: This `map` is because `next` returns an `Option<_>`.
-        .map(|(_, month)| month.into_iter()
-            .apply(by_week)
-            .map(|(_, weeks)| weeks)
-            .apply(format_weeks)
-            .collect::<Vec<_>>()
-            .join("\n"));
+        .map(|(_, month)| {
+            let weeks = month.apply(by_week_lazy);
+            let weeks = weeks.into_iter();
+            weeks
+                .map(|(_, weeks)| {
+                    let weeks: itertools::Group<_, _, _> = weeks;
+                    weeks
+                })
+
+                // .apply(format_weeks) // <- borrowck problem
+                .map(format_week) // <- no problem
+
+                .join("\n")
+        });
 
     assert_eq!(
         jan_2013.as_ref().map(|s| &**s),
